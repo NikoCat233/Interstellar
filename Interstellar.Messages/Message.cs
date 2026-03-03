@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace Interstellar.Messages;
 
@@ -56,7 +51,7 @@ public interface IMessage
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static protected int SerializeStringCompress(ref Span<byte> bytes, string str) => SerializeBytes(ref bytes, str == null ? [] : GZipMessage.CompressString(str));
-    
+
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static protected int DeserializeStringCompress(ref ReadOnlySpan<byte> bytes, out string value)

@@ -1,6 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
-
-namespace Interstellar.Messages.Messages;
+﻿namespace Interstellar.Messages.Messages;
 
 public class JoinMessage : IMessage
 {

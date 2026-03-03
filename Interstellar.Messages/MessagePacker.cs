@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Interstellar.Messages;
+﻿namespace Interstellar.Messages;
 
 public static class MessagePacker
 {
@@ -39,7 +33,7 @@ public static class MessagePacker
             MessageTag tag = (MessageTag)bytes[read];
             read += 1;
             int messageLength = messageProcessor.Process(tag, bytes.Slice(read));
-            if(messageLength < 0) throw new InvalidDataException("Invalid tag detected (tag: " + tag +")");
+            if (messageLength < 0) throw new InvalidDataException("Invalid tag detected (tag: " + tag + ")");
             read += messageLength;
         }
     }

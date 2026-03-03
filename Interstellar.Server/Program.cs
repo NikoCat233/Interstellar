@@ -1,13 +1,12 @@
 using Interstellar.Server.Services;
 using Interstellar.Server.VoiceChat;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Http;
 using Microsoft.IdentityModel.Tokens;
 using SIPSorcery.Sys;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
-using System.Security.Cryptography.X509Certificates;
 using System.Security.Claims;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.RateLimiting;
 

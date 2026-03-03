@@ -186,7 +186,7 @@ internal sealed class VCClientSession : IMessageProcessor
         var stream = new MediaStreamTrack(format, MediaStreamStatusEnum.RecvOnly);
         connection.addTrack(stream);
 
-        SendMessages([new ShareIdMessage(client.ClientId), UpdateTracks(room.CurrentVoiceMask), ..client.ShareExistingProfiles()]);
+        SendMessages([new ShareIdMessage(client.ClientId), UpdateTracks(room.CurrentVoiceMask), .. client.ShareExistingProfiles()]);
     }
 
     private void AcceptSdpAnswer(SdpAnswerMessage message)
@@ -212,7 +212,7 @@ internal sealed class VCClientSession : IMessageProcessor
             return;
         }
 
-        SendMessages([UpdateTracks(client.Room.CurrentVoiceMask), ..client.ShareExistingProfiles()]);
+        SendMessages([UpdateTracks(client.Room.CurrentVoiceMask), .. client.ShareExistingProfiles()]);
     }
 
     private SdpOfferMessage UpdateTracks(long mask)

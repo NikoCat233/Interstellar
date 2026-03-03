@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Interstellar.Messages.Variation;
+﻿namespace Interstellar.Messages.Variation;
 
 public class ShareMuteStatusMessage : IMessage
 {

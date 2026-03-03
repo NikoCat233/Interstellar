@@ -1,11 +1,4 @@
-﻿using Interstellar.Messages.Messages;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Interstellar.Messages.Variation;
+﻿namespace Interstellar.Messages.Variation;
 
 public class CustomMessage : IMessage
 {
@@ -13,7 +6,7 @@ public class CustomMessage : IMessage
 
     public CustomMessage(byte[] data)
     {
-        Data = data;    
+        Data = data;
     }
 
     int IMessage.Serialize(Span<byte> bytes)

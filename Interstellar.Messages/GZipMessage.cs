@@ -1,15 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO.Compression;
-using System.Linq;
+﻿using System.IO.Compression;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace Interstellar.Messages;
 
 static public class GZipMessage
 {
-    static public byte[] CompressString(string text) {
+    static public byte[] CompressString(string text)
+    {
         byte[] inputBytes = Encoding.UTF8.GetBytes(text);
 
         using (var outputStream = new MemoryStream())
