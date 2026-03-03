@@ -5,6 +5,7 @@ using Interstellar.Messages.Variation;
 using NAudio.Wave;
 using SIPSorcery.Net;
 using System;
+using System.Security.Authentication;
 using System.Text;
 using WebSocketSharp;
 
@@ -113,6 +114,7 @@ internal class RoomConnection : IMessageProcessor
             SetUpRTCConnection();
             this.socket.SendMessage(new JoinMessage(this.roomCode, this.region));
         };
+        this.socket.SslConfiguration.EnabledSslProtocols = SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13;
         this.socket.Connect();
     }
 
