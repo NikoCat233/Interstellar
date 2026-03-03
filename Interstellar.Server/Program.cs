@@ -41,7 +41,7 @@ internal static class Program
 
         bool secureFromArg = args.Any(a => a.Equals("-secure", StringComparison.OrdinalIgnoreCase));
         bool enableSsl = serverOptions.EnableSsl || secureFromArg;
-        SslProtocols sslProtocols = ResolveSslProtocols(serverOptions.MinTlsVersion);
+        SslProtocols sslProtocols = ResolveSslProtocols(serverOptions.MinTlsVersion, serverOptions.MaxTlsVersion);
         string urlPrefix = enableSsl ? "https://" : "http://";
         string hostPort = args.FirstOrDefault(a => !a.StartsWith('-')) ?? $"{serverOptions.Host}:{serverOptions.Port}";
         string listenUrl = urlPrefix + hostPort;
@@ -250,33 +250,50 @@ internal static class Program
 
         app.MapFallback(() => ApiResponse.Error("not_found", "Resource was not found.", StatusCodes.Status404NotFound));
         app.Logger.LogInformation(
-            "Interstellar server started. ListenUrl={ListenUrl}, SslEnabled={SslEnabled}, MinTlsVersion={MinTlsVersion}, UdpPortRange={UdpPortRangeStart}-{UdpPortRangeEnd}, StartedAt={StartedAtUtc}.",
+            "Interstellar server started. ListenUrl={ListenUrl}, SslEnabled={SslEnabled}, MinTlsVersion={MinTlsVersion}, MaxTlsVersion={MaxTlsVersion}, UdpPortRange={UdpPortRangeStart}-{UdpPortRangeEnd}, StartedAt={StartedAtUtc}.",
             listenUrl,
             enableSsl,
             serverOptions.MinTlsVersion,
+            serverOptions.MaxTlsVersion,
             mediaOptions.UdpPortRangeStart,
             mediaOptions.UdpPortRangeEnd,
             StartedAt);
         app.Run();
     }
 
-    private static SslProtocols ResolveSslProtocols(string minTlsVersion)
+    private static SslProtocols ResolveSslProtocols(string minTlsVersion, string maxTlsVersion)
     {
-        string normalized = (minTlsVersion ?? "").Trim();
-        if (normalized.Length == 0)
+        int min = ParseTlsVersion(minTlsVersion, "Server:MinTlsVersion", "1.0");
+        int max = ParseTlsVersion(maxTlsVersion, "Server:MaxTlsVersion", "1.3");
+        if (max < min)
         {
-            normalized = "1.0";
+            throw new InvalidOperationException("Server:MaxTlsVersion must be greater than or equal to Server:MinTlsVersion.");
         }
 
+        SslProtocols protocols = SslProtocols.None;
+#pragma warning disable SYSLIB0039
+        if (min <= 10 && max >= 10) protocols |= SslProtocols.Tls;
+        if (min <= 11 && max >= 11) protocols |= SslProtocols.Tls11;
+#pragma warning restore SYSLIB0039
+        if (min <= 12 && max >= 12) protocols |= SslProtocols.Tls12;
+        if (min <= 13 && max >= 13) protocols |= SslProtocols.Tls13;
+        if (protocols == SslProtocols.None)
+        {
+            throw new InvalidOperationException("No valid TLS protocol was selected. Check MinTlsVersion and MaxTlsVersion settings.");
+        }
+        return protocols;
+    }
+
+    private static int ParseTlsVersion(string? value, string keyName, string defaultValue)
+    {
+        string normalized = string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
         return normalized.ToLowerInvariant() switch
         {
-#pragma warning disable SYSLIB0039
-            "1.0" or "tls1.0" or "tls10" => SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
-            "1.1" or "tls1.1" or "tls11" => SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
-#pragma warning restore SYSLIB0039
-            "1.2" or "tls1.2" or "tls12" => SslProtocols.Tls12 | SslProtocols.Tls13,
-            "1.3" or "tls1.3" or "tls13" => SslProtocols.Tls13,
-            _ => throw new InvalidOperationException("Server:MinTlsVersion must be one of: 1.0, 1.1, 1.2, 1.3.")
+            "1.0" or "tls1.0" or "tls10" => 10,
+            "1.1" or "tls1.1" or "tls11" => 11,
+            "1.2" or "tls1.2" or "tls12" => 12,
+            "1.3" or "tls1.3" or "tls13" => 13,
+            _ => throw new InvalidOperationException($"{keyName} must be one of: 1.0, 1.1, 1.2, 1.3.")
         };
     }
 
@@ -314,6 +331,7 @@ internal static class Program
         public string CertificatePath { get; set; } = ""; // PEM 格式公钥文件路径
         public string CertificateKeyPath { get; set; } = ""; // PEM 格式私钥文件路径(无密码)
         public string MinTlsVersion { get; set; } = "1.0";
+        public string MaxTlsVersion { get; set; } = "1.3";
     }
 
     private sealed class MediaOptions
