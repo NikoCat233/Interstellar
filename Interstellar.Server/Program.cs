@@ -6,6 +6,7 @@ using Serilog;
 using SIPSorcery.Sys;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using System.Security.Authentication;
 using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -40,20 +41,30 @@ internal static class Program
 
         bool secureFromArg = args.Any(a => a.Equals("-secure", StringComparison.OrdinalIgnoreCase));
         bool enableSsl = serverOptions.EnableSsl || secureFromArg;
+        SslProtocols sslProtocols = ResolveSslProtocols(serverOptions.MinTlsVersion);
         string urlPrefix = enableSsl ? "https://" : "http://";
         string hostPort = args.FirstOrDefault(a => !a.StartsWith('-')) ?? $"{serverOptions.Host}:{serverOptions.Port}";
         string listenUrl = urlPrefix + hostPort;
         builder.WebHost.UseUrls(listenUrl);
         if (enableSsl)
         {
+            X509Certificate2? certificate = null;
             if (!string.IsNullOrWhiteSpace(serverOptions.CertificatePath) && !string.IsNullOrWhiteSpace(serverOptions.CertificateKeyPath))
             {
-                var certificate = X509Certificate2.CreateFromPemFile(serverOptions.CertificatePath, serverOptions.CertificateKeyPath);
-                builder.WebHost.ConfigureKestrel(kestrel =>
-                {
-                    kestrel.ConfigureHttpsDefaults(https => https.ServerCertificate = certificate);
-                });
+                certificate = X509Certificate2.CreateFromPemFile(serverOptions.CertificatePath, serverOptions.CertificateKeyPath);
             }
+
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.ConfigureHttpsDefaults(https =>
+                {
+                    https.SslProtocols = sslProtocols;
+                    if (certificate is not null)
+                    {
+                        https.ServerCertificate = certificate;
+                    }
+                });
+            });
         }
 
         PortRange? udpPortRange = null;
@@ -239,13 +250,34 @@ internal static class Program
 
         app.MapFallback(() => ApiResponse.Error("not_found", "Resource was not found.", StatusCodes.Status404NotFound));
         app.Logger.LogInformation(
-            "Interstellar server started. ListenUrl={ListenUrl}, SslEnabled={SslEnabled}, UdpPortRange={UdpPortRangeStart}-{UdpPortRangeEnd}, StartedAt={StartedAtUtc}.",
+            "Interstellar server started. ListenUrl={ListenUrl}, SslEnabled={SslEnabled}, MinTlsVersion={MinTlsVersion}, UdpPortRange={UdpPortRangeStart}-{UdpPortRangeEnd}, StartedAt={StartedAtUtc}.",
             listenUrl,
             enableSsl,
+            serverOptions.MinTlsVersion,
             mediaOptions.UdpPortRangeStart,
             mediaOptions.UdpPortRangeEnd,
             StartedAt);
         app.Run();
+    }
+
+    private static SslProtocols ResolveSslProtocols(string minTlsVersion)
+    {
+        string normalized = (minTlsVersion ?? "").Trim();
+        if (normalized.Length == 0)
+        {
+            normalized = "1.0";
+        }
+
+        return normalized.ToLowerInvariant() switch
+        {
+#pragma warning disable SYSLIB0039
+            "1.0" or "tls1.0" or "tls10" => SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
+            "1.1" or "tls1.1" or "tls11" => SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
+#pragma warning restore SYSLIB0039
+            "1.2" or "tls1.2" or "tls12" => SslProtocols.Tls12 | SslProtocols.Tls13,
+            "1.3" or "tls1.3" or "tls13" => SslProtocols.Tls13,
+            _ => throw new InvalidOperationException("Server:MinTlsVersion must be one of: 1.0, 1.1, 1.2, 1.3.")
+        };
     }
 
     private static class ApiResponse
@@ -281,6 +313,7 @@ internal static class Program
         public bool EnableSsl { get; set; }
         public string CertificatePath { get; set; } = ""; // PEM 格式公钥文件路径
         public string CertificateKeyPath { get; set; } = ""; // PEM 格式私钥文件路径(无密码)
+        public string MinTlsVersion { get; set; } = "1.0";
     }
 
     private sealed class MediaOptions
