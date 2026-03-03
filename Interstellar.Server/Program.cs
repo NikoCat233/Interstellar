@@ -229,13 +229,22 @@ internal static class Program
                 return;
             }
 
+            string remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            int? remotePort = context.Connection.RemotePort > 0 ? context.Connection.RemotePort : null;
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
             var logger = context.RequestServices.GetRequiredService<ILogger<VCClientSession>>();
-            var session = new VCClientSession(socket, runtime.UdpPortRange, logger);
+            var session = new VCClientSession(socket, runtime.UdpPortRange, logger, remoteIp, remotePort);
             await session.RunAsync(context.RequestAborted);
         });
 
         app.MapFallback(() => ApiResponse.Error("not_found", "Resource was not found.", StatusCodes.Status404NotFound));
+        app.Logger.LogInformation(
+            "Interstellar server started. ListenUrl={ListenUrl}, SslEnabled={SslEnabled}, UdpPortRange={UdpPortRangeStart}-{UdpPortRangeEnd}, StartedAt={StartedAtUtc}.",
+            listenUrl,
+            enableSsl,
+            mediaOptions.UdpPortRangeStart,
+            mediaOptions.UdpPortRangeEnd,
+            StartedAt);
         app.Run();
     }
 

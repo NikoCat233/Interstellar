@@ -15,6 +15,8 @@ internal sealed class VCClientSession : IMessageProcessor
 {
     private readonly string id = Guid.NewGuid().ToString("N")[..8];
     private readonly WebSocket socket;
+    private readonly string remoteSocketIp;
+    private readonly int? remoteSocketPort;
     private readonly RTCPeerConnection connection;
     private readonly Dictionary<int, MediaStreamTrack> streamTracks = new(32);
     private readonly Dictionary<int, AudioStream> audioStreams = new(32);
@@ -24,15 +26,25 @@ internal sealed class VCClientSession : IMessageProcessor
 
     private VCClient? client;
     private bool closed;
+    private string disconnectReason = "Client left the game.";
+    private string? joinedRegion;
+    private string? joinedRoomCode;
 
     public string? RemoteIpAddress { get; private set; }
     public int? RemotePort { get; private set; }
     public int? LocalUdpPort { get; private set; }
 
-    public VCClientSession(WebSocket socket, PortRange? udpPortRange, ILogger<VCClientSession> logger)
+    public VCClientSession(
+        WebSocket socket,
+        PortRange? udpPortRange,
+        ILogger<VCClientSession> logger,
+        string remoteSocketIp,
+        int? remoteSocketPort)
     {
         this.socket = socket;
         this.logger = logger;
+        this.remoteSocketIp = remoteSocketIp;
+        this.remoteSocketPort = remoteSocketPort;
 
         connection = udpPortRange == null
             ? new RTCPeerConnection(WebSocketHelpers.GetRTCConfiguration())
@@ -63,7 +75,11 @@ internal sealed class VCClientSession : IMessageProcessor
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Client {ClientId} connected.", id);
+        logger.LogInformation(
+            "Client connected. SessionId={SessionId}, SocketIp={SocketIp}, SocketPort={SocketPort}.",
+            id,
+            remoteSocketIp,
+            remoteSocketPort);
         var senderTask = RunSenderAsync(cancellationToken);
 
         while (pendingIceCandidates.TryDequeue(out var msg))
@@ -95,7 +111,17 @@ internal sealed class VCClientSession : IMessageProcessor
         {
             ForceDisconnect("Client left the game.");
             await senderTask;
-            logger.LogInformation("Client {ClientId} disconnected.", id);
+            logger.LogInformation(
+                "Client disconnected. SessionId={SessionId}, ClientId={ClientId}, Region={Region}, RoomCode={RoomCode}, SocketIp={SocketIp}, SocketPort={SocketPort}, RtpRemoteIp={RtpRemoteIp}, RtpRemotePort={RtpRemotePort}, Reason={Reason}.",
+                id,
+                client?.ClientId,
+                joinedRegion,
+                joinedRoomCode,
+                remoteSocketIp,
+                remoteSocketPort,
+                RemoteIpAddress,
+                RemotePort,
+                disconnectReason);
         }
     }
 
@@ -188,8 +214,18 @@ internal sealed class VCClientSession : IMessageProcessor
             return;
         }
 
+        joinedRegion = message.Region;
+        joinedRoomCode = message.RoomCode;
         VCRoom room = RoomManager.GetRoom(message.Region, message.RoomCode);
         client = room.Join(this);
+        logger.LogInformation(
+            "Client joined room. SessionId={SessionId}, ClientId={ClientId}, Region={Region}, RoomCode={RoomCode}, SocketIp={SocketIp}, SocketPort={SocketPort}.",
+            id,
+            client.ClientId,
+            message.Region,
+            message.RoomCode,
+            remoteSocketIp,
+            remoteSocketPort);
 
         var format = AudioHelpers.GetOpusFormat(client.ClientId);
         var stream = new MediaStreamTrack(format, MediaStreamStatusEnum.RecvOnly);
@@ -333,6 +369,7 @@ internal sealed class VCClientSession : IMessageProcessor
         }
 
         closed = true;
+        disconnectReason = reason;
         client?.Close();
         connection.Close(reason);
 
