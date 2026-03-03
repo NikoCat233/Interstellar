@@ -40,9 +40,9 @@ internal static class Program
         builder.WebHost.UseUrls(listenUrl);
         if (enableSsl)
         {
-            if (!string.IsNullOrWhiteSpace(serverOptions.CertificatePath))
+            if (!string.IsNullOrWhiteSpace(serverOptions.CertificatePath) && !string.IsNullOrWhiteSpace(serverOptions.CertificateKeyPath))
             {
-                var certificate = new X509Certificate2(serverOptions.CertificatePath, serverOptions.CertificatePassword);
+                var certificate = X509Certificate2.CreateFromPemFile(serverOptions.CertificatePath, serverOptions.CertificateKeyPath);
                 builder.WebHost.ConfigureKestrel(kestrel =>
                 {
                     kestrel.ConfigureHttpsDefaults(https => https.ServerCertificate = certificate);
@@ -263,8 +263,8 @@ internal static class Program
         public string Host { get; set; } = "localhost";
         public int Port { get; set; } = 8000;
         public bool EnableSsl { get; set; }
-        public string CertificatePath { get; set; } = "";
-        public string CertificatePassword { get; set; } = "";
+        public string CertificatePath { get; set; } = ""; // PEM 格式公钥文件路径
+        public string CertificateKeyPath { get; set; } = ""; // PEM 格式私钥文件路径(无密码)
     }
 
     private sealed class MediaOptions
