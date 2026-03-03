@@ -8,7 +8,11 @@ public static class WebSocketHelpers
     {
         return new RTCConfiguration
         {
-            iceServers = [new RTCIceServer { urls = "stun:stun.l.google.com:19302" }]
+            iceServers =
+            [
+                new RTCIceServer { urls = "stun:stun.cloudflare.com:3478" },
+                new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
+            ]
         };
     }
 }
