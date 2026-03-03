@@ -2,6 +2,7 @@ using Interstellar.Messages;
 using Interstellar.Messages.Messages;
 using Interstellar.Messages.Variation;
 using Interstellar.Server.VoiceChat;
+using Microsoft.Extensions.Logging;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
 using System.Collections.Concurrent;
@@ -19,6 +20,7 @@ internal sealed class VCClientSession : IMessageProcessor
     private readonly Dictionary<int, AudioStream> audioStreams = new(32);
     private readonly ConcurrentQueue<IceCandMessage> pendingIceCandidates = new();
     private readonly Channel<byte[]> outgoing = Channel.CreateUnbounded<byte[]>();
+    private readonly ILogger<VCClientSession> logger;
 
     private VCClient? client;
     private bool closed;
@@ -27,9 +29,10 @@ internal sealed class VCClientSession : IMessageProcessor
     public int? RemotePort { get; private set; }
     public int? LocalUdpPort { get; private set; }
 
-    public VCClientSession(WebSocket socket, PortRange? udpPortRange)
+    public VCClientSession(WebSocket socket, PortRange? udpPortRange, ILogger<VCClientSession> logger)
     {
         this.socket = socket;
+        this.logger = logger;
 
         connection = udpPortRange == null
             ? new RTCPeerConnection(WebSocketHelpers.GetRTCConfiguration())
@@ -60,7 +63,7 @@ internal sealed class VCClientSession : IMessageProcessor
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        Console.WriteLine($"Client {id} connected.");
+        logger.LogInformation("Client {ClientId} connected.", id);
         var senderTask = RunSenderAsync(cancellationToken);
 
         while (pendingIceCandidates.TryDequeue(out var msg))
@@ -84,7 +87,7 @@ internal sealed class VCClientSession : IMessageProcessor
                 }
                 catch (InvalidDataException ex)
                 {
-                    Console.WriteLine($"Error processing message from client {id}: {ex.Message}");
+                    logger.LogWarning(ex, "Error processing message from client {ClientId}.", id);
                 }
             }
         }
@@ -92,7 +95,7 @@ internal sealed class VCClientSession : IMessageProcessor
         {
             ForceDisconnect("Client left the game.");
             await senderTask;
-            Console.WriteLine($"Client {id} disconnected.");
+            logger.LogInformation("Client {ClientId} disconnected.", id);
         }
     }
 
@@ -220,7 +223,7 @@ internal sealed class VCClientSession : IMessageProcessor
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to get endpoint info: {ex.Message}");
+            logger.LogWarning(ex, "Failed to get endpoint info for client {ClientId}.", id);
         }
     }
 

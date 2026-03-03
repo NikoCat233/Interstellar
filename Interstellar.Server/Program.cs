@@ -2,6 +2,7 @@ using Interstellar.Server.Services;
 using Interstellar.Server.VoiceChat;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Serilog;
 using SIPSorcery.Sys;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
@@ -19,6 +20,11 @@ internal static class Program
     public static void Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+            .ReadFrom.Configuration(context.Configuration)
+            .ReadFrom.Services(services)
+            .Enrich.FromLogContext());
+
         var adminAuth = builder.Configuration.GetSection("AdminAuth").Get<AdminAuthOptions>() ?? new AdminAuthOptions();
         var serverOptions = builder.Configuration.GetSection("Server").Get<ServerOptions>() ?? new ServerOptions();
         var mediaOptions = builder.Configuration.GetSection("Media").Get<MediaOptions>() ?? new MediaOptions();
@@ -224,7 +230,8 @@ internal static class Program
             }
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
-            var session = new VCClientSession(socket, runtime.UdpPortRange);
+            var logger = context.RequestServices.GetRequiredService<ILogger<VCClientSession>>();
+            var session = new VCClientSession(socket, runtime.UdpPortRange, logger);
             await session.RunAsync(context.RequestAborted);
         });
 
