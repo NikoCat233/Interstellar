@@ -119,7 +119,10 @@ internal class VCClient
             IsMute: IsMute,
             IsClosed: IsClosed,
             PlayerName: playerName,
-            PlayerId: playerId);
+            PlayerId: playerId,
+            RemoteIpAddress: service.RemoteIpAddress,
+            RemotePort: service.RemotePort,
+            LocalUdpPort: service.LocalUdpPort);
     }
 
     internal IEnumerable<ShareProfileMessage> ShareExistingProfiles()
@@ -134,4 +137,12 @@ internal class VCClient
     }
 }
 
-internal sealed record ClientSnapshot(byte ClientId, bool IsMute, bool IsClosed, string? PlayerName, byte? PlayerId);
+internal sealed record ClientSnapshot(
+    byte ClientId,
+    bool IsMute,
+    bool IsClosed,
+    string? PlayerName,
+    byte? PlayerId,
+    string? RemoteIpAddress,
+    int? RemotePort,
+    int? LocalUdpPort);

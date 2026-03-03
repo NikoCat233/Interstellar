@@ -23,6 +23,10 @@ internal sealed class VCClientSession : IMessageProcessor
     private VCClient? client;
     private bool closed;
 
+    public string? RemoteIpAddress { get; private set; }
+    public int? RemotePort { get; private set; }
+    public int? LocalUdpPort { get; private set; }
+
     public VCClientSession(WebSocket socket, PortRange? udpPortRange)
     {
         this.socket = socket;
@@ -48,6 +52,8 @@ internal sealed class VCClientSession : IMessageProcessor
                 pendingIceCandidates.Enqueue(msg);
             }
         };
+
+        connection.oniceconnectionstatechange += _ => UpdateEndpointInfo();
     }
 
     public bool IsClosed => closed || socket.State is WebSocketState.Closed or WebSocketState.Aborted or WebSocketState.CloseSent;
@@ -192,6 +198,30 @@ internal sealed class VCClientSession : IMessageProcessor
     private void AcceptSdpAnswer(SdpAnswerMessage message)
     {
         connection.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = message.Sdp });
+        UpdateEndpointInfo();
+    }
+
+    private void UpdateEndpointInfo()
+    {
+        try
+        {
+            var remoteEndpoint = connection.AudioDestinationEndPoint;
+            if (remoteEndpoint != null)
+            {
+                RemoteIpAddress = remoteEndpoint.Address.ToString();
+                RemotePort = remoteEndpoint.Port;
+            }
+
+            var localEndpoint = connection.GetRtpChannel()?.RTPLocalEndPoint;
+            if (localEndpoint != null)
+            {
+                LocalUdpPort = localEndpoint.Port;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to get endpoint info: {ex.Message}");
+        }
     }
 
     private void AddIceCandidate(IceCandMessage message)
