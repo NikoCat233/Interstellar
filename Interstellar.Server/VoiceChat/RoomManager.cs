@@ -1,29 +1,70 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
 namespace Interstellar.Server.VoiceChat;
 
-static internal class RoomManager
+internal static class RoomManager
 {
-    static private Dictionary<string, VCRoom> rooms = [];
+    private static readonly Dictionary<string, VCRoom> Rooms = new();
+    private static readonly object Sync = new();
 
-    static public VCRoom GetRoom(string region, string roomId)
+    public static VCRoom GetRoom(string region, string roomId)
     {
         string key = region + "." + roomId;
-        if (rooms.TryGetValue(key, out var room))
+        lock (Sync)
         {
-            return room;
-        }
-        else
-        {
+            if (Rooms.TryGetValue(key, out var room))
+            {
+                return room;
+            }
+
             room = new VCRoom(key);
-            rooms[key] = room;
+            Rooms[key] = room;
             return room;
         }
     }
 
-    static public void RemoveRoom(string key) => rooms.Remove(key);
+    public static void RemoveRoom(string key)
+    {
+        lock (Sync)
+        {
+            Rooms.Remove(key);
+        }
+    }
+
+    public static AdminSnapshot GetSnapshot(TimeSpan uptime)
+    {
+        RoomSnapshot[] rooms;
+        lock (Sync)
+        {
+            rooms = Rooms.Values.Select(r => r.ToSnapshot()).OrderBy(r => r.Key).ToArray();
+        }
+
+        return new AdminSnapshot(
+            RoomCount: rooms.Length,
+            ClientCount: rooms.Sum(r => r.ClientCount),
+            UptimeSeconds: (long)uptime.TotalSeconds,
+            Rooms: rooms);
+    }
+
+    public static bool TryDisconnectClient(string roomKey, byte clientId)
+    {
+        VCRoom? room;
+        lock (Sync)
+        {
+            Rooms.TryGetValue(roomKey, out room);
+        }
+
+        return room != null && room.DisconnectClient(clientId, $"Disconnected by admin from room {roomKey}.");
+    }
+
+    public static int DisconnectRoom(string roomKey)
+    {
+        VCRoom? room;
+        lock (Sync)
+        {
+            Rooms.TryGetValue(roomKey, out room);
+        }
+
+        return room?.DisconnectAllClients($"Room {roomKey} closed by admin.") ?? 0;
+    }
 }
+
+internal sealed record AdminSnapshot(int RoomCount, int ClientCount, long UptimeSeconds, IReadOnlyList<RoomSnapshot> Rooms);

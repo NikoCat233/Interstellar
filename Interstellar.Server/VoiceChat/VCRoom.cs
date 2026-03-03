@@ -1,116 +1,204 @@
-﻿using Interstellar.Messages;
-using Interstellar.Messages.Variation;
+using Interstellar.Messages;
 using Interstellar.Server.Services;
-using SIPSorcery.Net;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Interstellar.Server.VoiceChat;
 
-internal class VCRoom
+internal sealed class VCRoom
 {
-    string myKey;
-    Dictionary<byte, VCClient> fastClients = new();
+    private readonly string myKey;
+    private readonly Dictionary<byte, VCClient> fastClients = new();
+    private readonly object sync = new();
 
     public VCRoom(string key)
     {
         myKey = key;
     }
 
-    private void CheckAlive()
+    private void CheckAliveLocked()
     {
         foreach (var closed in fastClients.Where(c => c.Value.IsClosed).ToArray())
         {
-            try
-            {
-                Leave(closed.Value);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Error while removing closed client: " + ex);
-            }
+            fastClients.Remove(closed.Key);
         }
     }
 
-    private byte AvailableId()
+    private byte AvailableIdLocked()
     {
         byte id = 0;
-        while(fastClients.ContainsKey(id)) id++;
+        while (fastClients.ContainsKey(id))
+        {
+            id++;
+        }
+
         return id;
     }
 
-    public VCClient Join(VCClientService service)
+    public VCClient Join(VCClientSession service)
     {
-        CheckAlive();
-
-        var client = new VCClient(service, AvailableId(), this);
-        fastClients.Add(client.ClientId, client);
-        
-        //入室を通知する。
-        long currentMask = CurrentVoiceMask;
-
-        foreach (var c in fastClients.Values)
+        lock (sync)
         {
-            if(c.ClientId != client.ClientId) c.OnJoinOrLeaveAnyone(currentMask);
-        }
+            CheckAliveLocked();
+            var client = new VCClient(service, AvailableIdLocked(), this);
+            fastClients.Add(client.ClientId, client);
 
-        return client;
+            long currentMask = CurrentVoiceMaskLocked();
+            foreach (var c in fastClients.Values)
+            {
+                if (c.ClientId != client.ClientId)
+                {
+                    c.OnJoinOrLeaveAnyone(currentMask);
+                }
+            }
+
+            return client;
+        }
     }
 
     public void Leave(VCClient client)
     {
-        if (fastClients.Remove(client.ClientId))
+        lock (sync)
         {
-            //退室を通知する。
-            long currentMask = CurrentVoiceMask;
-            foreach (var c in fastClients.Values)
+            if (fastClients.Remove(client.ClientId))
             {
-                if (c.IsClosed) continue;
-                c.OnJoinOrLeaveAnyone(currentMask);
-                c.NoticeLeaveClient(client.ClientId);
+                long currentMask = CurrentVoiceMaskLocked();
+                foreach (var c in fastClients.Values)
+                {
+                    if (c.IsClosed)
+                    {
+                        continue;
+                    }
+
+                    c.OnJoinOrLeaveAnyone(currentMask);
+                    c.NoticeLeaveClient(client.ClientId);
+                }
+            }
+
+            if (fastClients.Count == 0)
+            {
+                RoomManager.RemoveRoom(myKey);
             }
         }
-
-        if(fastClients.Count == 0) RoomManager.RemoveRoom(myKey);
     }
 
-    public long CurrentVoiceMask { get
+    public long CurrentVoiceMask
+    {
+        get
         {
-            long mask = 0;
-            foreach(var client in fastClients.Values)
+            lock (sync)
             {
-                mask |= (1L << client.ClientId);
+                return CurrentVoiceMaskLocked();
             }
-            return mask;
-        } 
+        }
+    }
+
+    private long CurrentVoiceMaskLocked()
+    {
+        long mask = 0;
+        foreach (var client in fastClients.Values)
+        {
+            mask |= (1L << client.ClientId);
+        }
+
+        return mask;
     }
 
     public void Broadcast(byte id, uint durationRtpUnits, byte[] encodedAudio)
     {
-        foreach(var client in fastClients.Values)
+        lock (sync)
         {
-            if(client.ClientId != id) client.SendAudio(id, durationRtpUnits, encodedAudio);
+            foreach (var client in fastClients.Values)
+            {
+                if (client.ClientId != id)
+                {
+                    client.SendAudio(id, durationRtpUnits, encodedAudio);
+                }
+            }
         }
     }
 
     public void BroadcastRawMessage(byte id, byte[] rawMessage)
     {
-        foreach (var client in fastClients.Values)
+        lock (sync)
         {
-            if (client.ClientId != id) client.Send(rawMessage);
+            foreach (var client in fastClients.Values)
+            {
+                if (client.ClientId != id)
+                {
+                    client.Send(rawMessage);
+                }
+            }
         }
     }
 
     public void Broadcast(byte sender, IMessage message)
     {
-        foreach (var client in fastClients.Values)
+        lock (sync)
         {
-            if (client.ClientId != sender) client.Send(message);
+            foreach (var client in fastClients.Values)
+            {
+                if (client.ClientId != sender)
+                {
+                    client.Send(message);
+                }
+            }
         }
     }
 
-    public IEnumerable<VCClient> Clients => fastClients.Values;
+    public IEnumerable<VCClient> Clients
+    {
+        get
+        {
+            lock (sync)
+            {
+                return fastClients.Values.ToArray();
+            }
+        }
+    }
+
+    public RoomSnapshot ToSnapshot()
+    {
+        lock (sync)
+        {
+            return new RoomSnapshot(
+                Key: myKey,
+                ClientCount: fastClients.Count,
+                VoiceMask: CurrentVoiceMaskLocked(),
+                Clients: fastClients.Values.OrderBy(c => c.ClientId).Select(c => c.ToSnapshot()).ToArray());
+        }
+    }
+
+    public bool DisconnectClient(byte clientId, string reason)
+    {
+        VCClient? target;
+        lock (sync)
+        {
+            fastClients.TryGetValue(clientId, out target);
+        }
+
+        if (target == null)
+        {
+            return false;
+        }
+
+        target.ForceDisconnect(reason);
+        return true;
+    }
+
+    public int DisconnectAllClients(string reason)
+    {
+        VCClient[] targets;
+        lock (sync)
+        {
+            targets = fastClients.Values.ToArray();
+        }
+
+        foreach (var client in targets)
+        {
+            client.ForceDisconnect(reason);
+        }
+
+        return targets.Length;
+    }
 }
+
+internal sealed record RoomSnapshot(string Key, int ClientCount, long VoiceMask, IReadOnlyList<ClientSnapshot> Clients);
