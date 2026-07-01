@@ -242,9 +242,13 @@ internal static class Program
 
             string remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
             int? remotePort = context.Connection.RemotePort > 0 ? context.Connection.RemotePort : null;
+            bool supportsExtendedProtocol = context.Request.Headers.SecWebSocketExtensions
+                .Any(v => v?.Contains("permessage-deflate", StringComparison.OrdinalIgnoreCase) == true);
+            string scheme = context.Request.IsHttps ? "wss" : "ws";
+            string voiceServerUrl = $"{scheme}://{context.Request.Host}/vc";
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
             var logger = context.RequestServices.GetRequiredService<ILogger<VCClientSession>>();
-            var session = new VCClientSession(socket, runtime.UdpPortRange, logger, remoteIp, remotePort);
+            var session = new VCClientSession(socket, runtime.UdpPortRange, logger, remoteIp, remotePort, supportsExtendedProtocol, voiceServerUrl);
             await session.RunAsync(context.RequestAborted);
         });
 

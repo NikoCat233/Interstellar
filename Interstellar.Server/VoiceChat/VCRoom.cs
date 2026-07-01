@@ -1,4 +1,5 @@
 using Interstellar.Messages;
+using Interstellar.Messages.Variation;
 using Interstellar.Server.Services;
 
 namespace Interstellar.Server.VoiceChat;
@@ -8,6 +9,8 @@ internal sealed class VCRoom
     private readonly string myKey;
     private readonly Dictionary<byte, VCClient> fastClients = new();
     private readonly object sync = new();
+
+    public HostSettingsMessage? LastHostSettings { get; set; }
 
     public VCRoom(string key)
     {
@@ -139,6 +142,20 @@ internal sealed class VCRoom
                 if (client.ClientId != sender)
                 {
                     client.Send(message);
+                }
+            }
+        }
+    }
+
+    public void BroadcastExtended(byte sender, IMessage message)
+    {
+        lock (sync)
+        {
+            foreach (var client in fastClients.Values)
+            {
+                if (client.ClientId != sender)
+                {
+                    client.SendExtended(message);
                 }
             }
         }

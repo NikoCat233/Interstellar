@@ -44,6 +44,17 @@ internal static class RoomManager
             Rooms: rooms);
     }
 
+    public static int TotalClientCount
+    {
+        get
+        {
+            lock (Sync)
+            {
+                return Rooms.Values.Sum(room => room.Clients.Count());
+            }
+        }
+    }
+
     public static bool TryDisconnectClient(string roomKey, byte clientId)
     {
         VCRoom? room;

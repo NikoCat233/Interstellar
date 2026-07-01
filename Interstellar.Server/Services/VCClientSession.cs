@@ -21,11 +21,15 @@ internal sealed class VCClientSession : IMessageProcessor
     private readonly Dictionary<int, MediaStreamTrack> streamTracks = new(32);
     private readonly Dictionary<int, AudioStream> audioStreams = new(32);
     private readonly ConcurrentQueue<IceCandMessage> pendingIceCandidates = new();
+    private readonly ConcurrentQueue<IceCandMessage> pendingRemoteIceCandidates = new();
     private readonly Channel<byte[]> outgoing = Channel.CreateUnbounded<byte[]>();
     private readonly ILogger<VCClientSession> logger;
+    private readonly string voiceServerUrl;
 
     private VCClient? client;
     private bool closed;
+    private bool supportsExtendedProtocol;
+    private bool remoteDescriptionSet;
     private string disconnectReason = "Client left the game.";
     private string? joinedRegion;
     private string? joinedRoomCode;
@@ -39,12 +43,16 @@ internal sealed class VCClientSession : IMessageProcessor
         PortRange? udpPortRange,
         ILogger<VCClientSession> logger,
         string remoteSocketIp,
-        int? remoteSocketPort)
+        int? remoteSocketPort,
+        bool supportsExtendedProtocol,
+        string voiceServerUrl)
     {
         this.socket = socket;
         this.logger = logger;
         this.remoteSocketIp = remoteSocketIp;
         this.remoteSocketPort = remoteSocketPort;
+        this.supportsExtendedProtocol = supportsExtendedProtocol;
+        this.voiceServerUrl = voiceServerUrl;
 
         connection = udpPortRange == null
             ? new RTCPeerConnection(WebSocketHelpers.GetRTCConfiguration())
@@ -107,9 +115,23 @@ internal sealed class VCClientSession : IMessageProcessor
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            disconnectReason = "Request aborted.";
+        }
+        catch (WebSocketException ex)
+        {
+            disconnectReason = "WebSocket receive failed: " + ex.Message;
+            logger.LogWarning(ex, "WebSocket receive failed for client {ClientId}.", id);
+        }
+        catch (Exception ex)
+        {
+            disconnectReason = "Session failed: " + ex.Message;
+            logger.LogError(ex, "Unhandled session error for client {ClientId}.", id);
+        }
         finally
         {
-            ForceDisconnect("Client left the game.");
+            ForceDisconnect(disconnectReason);
             await senderTask;
             logger.LogInformation(
                 "Client disconnected. SessionId={SessionId}, ClientId={ClientId}, Region={Region}, RoomCode={RoomCode}, SocketIp={SocketIp}, SocketPort={SocketPort}, RtpRemoteIp={RtpRemoteIp}, RtpRemotePort={RtpRemotePort}, Reason={Reason}.",
@@ -159,10 +181,26 @@ internal sealed class VCClientSession : IMessageProcessor
 
     private async Task RunSenderAsync(CancellationToken cancellationToken)
     {
-        await foreach (var message in outgoing.Reader.ReadAllAsync(cancellationToken))
+        try
         {
-            if (socket.State != WebSocketState.Open) break;
-            await socket.SendAsync(message, WebSocketMessageType.Binary, true, cancellationToken);
+            await foreach (var message in outgoing.Reader.ReadAllAsync(cancellationToken))
+            {
+                if (socket.State != WebSocketState.Open) break;
+                await socket.SendAsync(message, WebSocketMessageType.Binary, true, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (WebSocketException ex)
+        {
+            disconnectReason = "WebSocket send failed: " + ex.Message;
+            logger.LogWarning(ex, "WebSocket send failed for client {ClientId}.", id);
+        }
+        catch (Exception ex)
+        {
+            disconnectReason = "Sender failed: " + ex.Message;
+            logger.LogError(ex, "Unhandled sender error for client {ClientId}.", id);
         }
     }
 
@@ -200,7 +238,19 @@ internal sealed class VCClientSession : IMessageProcessor
                 break;
             case MessageTag.UpdateMuteStatus:
                 var muteStatus = UpdateMuteStatusMessage.DeserializeWithoutTag(bytes, out read);
-                client?.UpdateMuteStatus(muteStatus.Mute);
+                if (read > 1)
+                {
+                    supportsExtendedProtocol = true;
+                }
+                client?.UpdateMuteStatus(muteStatus.Mute, muteStatus.IsImpostorRadio);
+                break;
+            case MessageTag.HostSettings:
+                supportsExtendedProtocol = true;
+                var hostSettings = HostSettingsMessage.DeserializeWithoutTag(bytes, out read);
+                client?.BroadcastHostSettings(hostSettings);
+                break;
+            case MessageTag.ServerInfo:
+                read = 0;
                 break;
         }
 
@@ -231,12 +281,23 @@ internal sealed class VCClientSession : IMessageProcessor
         var stream = new MediaStreamTrack(format, MediaStreamStatusEnum.RecvOnly);
         connection.addTrack(stream);
 
-        SendMessages([new ShareIdMessage(client.ClientId), UpdateTracks(room.CurrentVoiceMask), .. client.ShareExistingProfiles()]);
+        List<IMessage> joinMessages = [new ShareIdMessage(client.ClientId), UpdateTracks(room.CurrentVoiceMask), .. client.ShareExistingProfiles()];
+        if (supportsExtendedProtocol && room.LastHostSettings != null)
+        {
+            joinMessages.Add(room.LastHostSettings);
+        }
+        SendMessages(joinMessages);
+        SendServerInfo();
     }
 
     private void AcceptSdpAnswer(SdpAnswerMessage message)
     {
         connection.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = message.Sdp });
+        remoteDescriptionSet = true;
+        while (pendingRemoteIceCandidates.TryDequeue(out var candidate))
+        {
+            AddIceCandidateNow(candidate);
+        }
         UpdateEndpointInfo();
     }
 
@@ -265,13 +326,31 @@ internal sealed class VCClientSession : IMessageProcessor
 
     private void AddIceCandidate(IceCandMessage message)
     {
-        connection.addIceCandidate(new RTCIceCandidateInit
+        if (!remoteDescriptionSet)
         {
-            candidate = message.Candidate,
-            sdpMid = message.SdpMid,
-            sdpMLineIndex = (ushort)message.SdpMLineIndex,
-            usernameFragment = message.UsernameFragment
-        });
+            pendingRemoteIceCandidates.Enqueue(message);
+            return;
+        }
+
+        AddIceCandidateNow(message);
+    }
+
+    private void AddIceCandidateNow(IceCandMessage message)
+    {
+        try
+        {
+            connection.addIceCandidate(new RTCIceCandidateInit
+            {
+                candidate = message.Candidate,
+                sdpMid = message.SdpMid,
+                sdpMLineIndex = (ushort)message.SdpMLineIndex,
+                usernameFragment = message.UsernameFragment
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Ignoring invalid remote ICE for client {ClientId}.", id);
+        }
     }
 
     private void ResendConnectionInformation()
@@ -281,7 +360,12 @@ internal sealed class VCClientSession : IMessageProcessor
             return;
         }
 
-        SendMessages([UpdateTracks(client.Room.CurrentVoiceMask), .. client.ShareExistingProfiles()]);
+        List<IMessage> reloadMessages = [UpdateTracks(client.Room.CurrentVoiceMask), .. client.ShareExistingProfiles()];
+        if (supportsExtendedProtocol && client.Room.LastHostSettings != null)
+        {
+            reloadMessages.Add(client.Room.LastHostSettings);
+        }
+        SendMessages(reloadMessages);
     }
 
     private SdpOfferMessage UpdateTracks(long mask)
@@ -359,6 +443,24 @@ internal sealed class VCClientSession : IMessageProcessor
     public void SendRawMessage(byte[] message)
     {
         outgoing.Writer.TryWrite(message.ToArray());
+    }
+
+    public void SendExtendedMessage(IMessage message)
+    {
+        if (supportsExtendedProtocol)
+        {
+            SendMessage(message);
+        }
+    }
+
+    public void SendServerInfo()
+    {
+        if (!supportsExtendedProtocol)
+        {
+            return;
+        }
+
+        SendMessage(new ServerInfoMessage(0, RoomManager.TotalClientCount, voiceServerUrl));
     }
 
     public void ForceDisconnect(string reason)

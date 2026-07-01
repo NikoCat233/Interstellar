@@ -16,6 +16,7 @@ internal class VCClient
     public bool IsClosed => service.IsClosed;
 
     public bool IsMute { get; private set; }
+    public bool IsImpostorRadio { get; private set; }
 
     public VCRoom Room => myRoom;
 
@@ -28,15 +29,22 @@ internal class VCClient
         myRoom = room;
     }
 
-    public void UpdateMuteStatus(bool isMute)
+    public void UpdateMuteStatus(bool isMute, bool isImpostorRadio = false)
     {
-        if (IsMute == isMute)
+        if (IsMute == isMute && IsImpostorRadio == isImpostorRadio)
         {
             return;
         }
 
         IsMute = isMute;
-        myRoom.Broadcast(ClientId, new ShareMuteStatusMessage(ClientId, isMute));
+        IsImpostorRadio = isImpostorRadio;
+        myRoom.Broadcast(ClientId, new ShareMuteStatusMessage(ClientId, isMute, isImpostorRadio));
+    }
+
+    public void BroadcastHostSettings(HostSettingsMessage message)
+    {
+        myRoom.LastHostSettings = message;
+        myRoom.BroadcastExtended(ClientId, message);
     }
 
     public void OnJoinOrLeaveAnyone(long currentMask)
@@ -72,6 +80,11 @@ internal class VCClient
     public void Send(IMessage message)
     {
         service.SendMessage(message);
+    }
+
+    public void SendExtended(IMessage message)
+    {
+        service.SendExtendedMessage(message);
     }
 
     public void UpdateProfile(string playerName, byte playerId)
@@ -117,6 +130,7 @@ internal class VCClient
         return new ClientSnapshot(
             ClientId: ClientId,
             IsMute: IsMute,
+            IsImpostorRadio: IsImpostorRadio,
             IsClosed: IsClosed,
             PlayerName: playerName,
             PlayerId: playerId,
@@ -140,6 +154,7 @@ internal class VCClient
 internal sealed record ClientSnapshot(
     byte ClientId,
     bool IsMute,
+    bool IsImpostorRadio,
     bool IsClosed,
     string? PlayerName,
     byte? PlayerId,
